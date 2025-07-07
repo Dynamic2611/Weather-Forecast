@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +20,33 @@ class _HomeUiState extends State<HomeUi> {
   List<String> searchedCities = [];
   final WeatherFactory _wf = WeatherFactory(OPENWEATHER_API_KEY);
   Weather? _weather;
+  List<Weather>? _forecast;
+
+  List<Weather> getNextTwoDaysForecast() {
+    if (_forecast == null || _forecast!.isEmpty) return [];
+
+    final now = DateTime.now();
+    final tomorrow = now.add(const Duration(days: 1));
+    final dayAfterTomorrow = now.add(const Duration(days: 2));
+
+    // Filter the forecast list for dates matching tomorrow and day after
+    final nextTwoDays = _forecast!.where((w) {
+      final wDate = w.date;
+      return wDate != null &&
+          (wDate.day == tomorrow.day || wDate.day == dayAfterTomorrow.day) &&
+          wDate.month == tomorrow.month; // Ensures same month
+    }).toList();
+
+    // Optional: group by day and return one item per day
+    final Map<int, Weather> groupedByDay = {};
+    for (final weather in nextTwoDays) {
+      groupedByDay[weather.date!.day] ??= weather;
+    }
+
+    return groupedByDay.values.take(2).toList(); // Ensures only 2 days are returned
+  }
+
+
 
   Future<void> saveCityToHistory(String city) async {
     final prefs = await SharedPreferences.getInstance();
@@ -54,8 +83,10 @@ class _HomeUiState extends State<HomeUi> {
   void fetchWeather(String city) async {
     try {
       Weather w = await _wf.currentWeatherByCityName(city);
+      List<Weather> forecast = await _wf.fiveDayForecastByCityName(city);
       setState(() {
         _weather = w;
+        _forecast = forecast;
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -64,8 +95,12 @@ class _HomeUiState extends State<HomeUi> {
     }
   }
 
+
+
+
   @override
   Widget build(BuildContext context) {
+    final nextTwoDays = getNextTwoDaysForecast();
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Color(0xFF6A11CB),
@@ -147,13 +182,33 @@ class _HomeUiState extends State<HomeUi> {
                 ],
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _infoBox("${DateFormat("HH:mm").format(DateTime.now())}", "Feels like\n${_weather?.tempFeelsLike?.celsius?.toStringAsFixed(0)}°C", Icons.thermostat),
-                _infoBox("${_weather?.windSpeed?.toStringAsFixed(1)} m/s", "Wind speed", Icons.air),
-                _infoBox("${_weather?.humidity?.toStringAsFixed(0)}%", "Humidity", Icons.water_drop),
-              ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        width: 2,
+                          color: Colors.white.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _infoBox("${DateFormat("HH:mm").format(DateTime.now())}", "Feels like\n${_weather?.tempFeelsLike?.celsius?.toStringAsFixed(0)}°C", Icons.thermostat),
+                        Text("|",style: TextStyle(fontSize: 40,color: Colors.white),),
+                        _infoBox("${_weather?.windSpeed?.toStringAsFixed(1)} m/s", "Wind speed", Icons.air),
+                        Text("|",style: TextStyle(fontSize: 40,color: Colors.white),),
+                        _infoBox("${_weather?.humidity?.toStringAsFixed(0)}%", "Humidity", Icons.water_drop),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 30),
             Expanded(
@@ -208,7 +263,7 @@ class _HomeUiState extends State<HomeUi> {
                       const SizedBox(height: 12),
                       Container(
                         margin: const EdgeInsets.only(right: 16),
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
                           color: Colors.grey[100],
                           borderRadius: BorderRadius.circular(20),
@@ -224,23 +279,43 @@ class _HomeUiState extends State<HomeUi> {
                             ),
                           ],
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(" 🌧️  Tomorrow", style: TextStyle(fontWeight: FontWeight.w600)),
-                                Text("       ${_weather?.weatherDescription}")
-                              ],
-                            ),
-
-                            Text(
-                              "🌧️ ${_weather?.tempMax?.celsius?.toStringAsFixed(0)}° / ${_weather?.tempMin?.celsius?.toStringAsFixed(0)}°",
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ],
+                        child: Column(
+                          children: nextTwoDays.map((w) {
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 15),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.grey.shade200, width: 1.5),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.grey.withOpacity(0.2),
+                                    blurRadius: 6,
+                                    offset: const Offset(2, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(" 🌧️ ${DateFormat('EEEE').format(w.date!)}", style: const TextStyle(fontWeight: FontWeight.w600)),
+                                      Text("       ${w.weatherDescription ?? 'No data'}")
+                                    ],
+                                  ),
+                                  Text(
+                                    "🌡️ ${w.tempMax?.celsius?.toStringAsFixed(0)}° / ${w.tempMin?.celsius?.toStringAsFixed(0)}°",
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
                         ),
+
                       ),
                     ],
                   ),
@@ -258,7 +333,6 @@ class _HomeUiState extends State<HomeUi> {
       width: 100,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white24,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -270,6 +344,13 @@ class _HomeUiState extends State<HomeUi> {
           Text(subtitle, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
         ],
       ),
+    );
+  }
+  Widget _verticalDivider() {
+    return Container(
+      height: 40,
+      width: 1,
+      color: Colors.white.withOpacity(0.3),
     );
   }
 
@@ -322,28 +403,30 @@ class _HomeUiState extends State<HomeUi> {
     final now = _weather?.date;
     if (now == null) return const SizedBox.shrink();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          DateFormat("h:mm a").format(now),
-          style: const TextStyle(fontSize: 35, color: Colors.white),
-        ),
-        const SizedBox(height: 10),
+
+
         Row(
           mainAxisAlignment: MainAxisAlignment.start,
           mainAxisSize: MainAxisSize.max,
           children: [
             Text(
               DateFormat("EEEE").format(now),
-              style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 15),
+              style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 20),
             ),
             Text(
-              "  ${DateFormat("d.M.y").format(now)}",
-              style: const TextStyle(fontWeight: FontWeight.w400, color: Colors.white, fontSize: 15),
+              "  ${DateFormat("dd/MM/y").format(now)}",
+              style: const TextStyle(fontWeight: FontWeight.w400, color: Colors.white, fontSize: 20),
             ),
           ],
-        )
+        ),
+        const SizedBox(height: 10),
+        Text(
+          DateFormat("h:mm a").format(now),
+          style: const TextStyle(fontSize: 30, color: Colors.white),
+        ),
       ],
     );
   }
