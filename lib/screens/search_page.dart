@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -13,18 +15,32 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final TextEditingController searchController = TextEditingController();
-  final String token = const Uuid().v4(); // Generate a fresh session token
+  final String token = const Uuid().v4();
   List<dynamic> listOfLocation = [];
+  List<String> searchedCities = [];
 
   @override
   void initState() {
     super.initState();
-    searchController.addListener(() {
-      _onChange();
+    loadSearchHistory();
+    searchController.addListener(_onChange);
+  }
+
+  Future<void> loadSearchHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      searchedCities = prefs.getStringList('searchedCities') ?? [];
     });
   }
 
-  _onChange() {
+  Future<void> deleteCity(String city) async {
+    final prefs = await SharedPreferences.getInstance();
+    searchedCities.remove(city);
+    await prefs.setStringList('searchedCities', searchedCities);
+    setState(() {});
+  }
+
+  void _onChange() {
     if (searchController.text.length >= 2) {
       placeSuggestion(searchController.text);
     } else {
@@ -35,16 +51,13 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void placeSuggestion(String input) async {
-    const String apiKey = "AIzaSyD8r0v2sE3uKxcJwSJUAixz5l0hnl16Pb8";
+    const String apiKey = "GOOGLE_API_KEY"; // Replace with your actual Google API key
     try {
       String baseUrl = "https://maps.googleapis.com/maps/api/place/autocomplete/json";
       String request = "$baseUrl?input=$input&key=$apiKey&sessiontoken=$token";
       final response = await http.get(Uri.parse(request));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        if (kDebugMode) {
-          print(data);
-        }
         setState(() {
           listOfLocation = data['predictions'];
         });
@@ -56,15 +69,35 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
+  Future<void> getCurrentLocationWeather() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (!serviceEnabled ||
+        permission == LocationPermission.deniedForever ||
+        permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.whileInUse ||
+        permission == LocationPermission.always) {
+      final pos = await Geolocator.getCurrentPosition();
+      Navigator.pop(context, {'lat': pos.latitude, 'lon': pos.longitude});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Scaffold(
-        body: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: TextField(
+        appBar: AppBar(
+          title: const Text("Search City"),
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            children: [
+              TextField(
                 controller: searchController,
                 decoration: const InputDecoration(
                   prefixIcon: Icon(Icons.search),
@@ -72,51 +105,51 @@ class _SearchPageState extends State<SearchPage> {
                   border: OutlineInputBorder(),
                 ),
               ),
-            ),
-            if (searchController.text.isNotEmpty && listOfLocation.isNotEmpty)
-              Expanded(
-                child: ListView.builder(
-                  itemCount: listOfLocation.length,
-                  itemBuilder: (context, index) {
-                    return ListTile(
-                      title: Text(listOfLocation[index]['description']),
-                      onTap: () {
-                        final cityName = listOfLocation[index]["structured_formatting"]["main_text"];
-                        if (cityName != null && cityName is String) {
-                          Navigator.pop(context, cityName); // pass only "Mumbai"
-                        }
-                        // You can return data or fetch lat/lon here
-                        print("Selected: ${listOfLocation[index]['description']}");
-                      },
-                    );
-                  },
-                ),
-              ),
-            if (searchController.text.isEmpty)
-              Container(
-                margin: const EdgeInsets.only(top: 20),
-                child: ElevatedButton(
-                  onPressed: () {
-                    // Add "get current location" logic here
-                  },
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.my_location, color: Colors.green),
-                      SizedBox(width: 10),
-                      Text(
-                        "My Location",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Colors.green,
+              const SizedBox(height: 10),
+              // ElevatedButton.icon(
+              //   onPressed: getCurrentLocationWeather,
+              //   icon: const Icon(Icons.my_location, color: Colors.white),
+              //   label: const Text("Use My Location"),
+              //   style: ElevatedButton.styleFrom(
+              //     backgroundColor: Colors.green,
+              //     foregroundColor: Colors.white,
+              //   ),
+              // ),
+              // const SizedBox(height: 10),
+              if (searchedCities.isNotEmpty)
+                Expanded(
+                  child: ListView(
+                    children: [
+                      const Text("Recently Searched:", style: TextStyle(fontWeight: FontWeight.bold)),
+                      ...searchedCities.map((city) => ListTile(
+                        leading: const Icon(Icons.location_city),
+                        title: Text(city),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => deleteCity(city),
                         ),
-                      )
+                        onTap: () => Navigator.pop(context, city),
+                      )),
+                      const Divider(),
                     ],
                   ),
                 ),
-              ),
-          ],
+              if (searchController.text.isNotEmpty && listOfLocation.isNotEmpty)
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: listOfLocation.length,
+                    itemBuilder: (context, index) {
+                      final location = listOfLocation[index];
+                      final cityName = location["structured_formatting"]["main_text"];
+                      return ListTile(
+                        title: Text(location['description']),
+                        onTap: () => Navigator.pop(context, cityName),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
